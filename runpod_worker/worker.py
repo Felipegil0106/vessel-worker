@@ -238,6 +238,38 @@ def run_colmap():
             "El video probablemente no tiene suficiente cobertura o solapamiento."
         )
 
+    # PASO CRÍTICO: undistortion de imágenes.
+    # COLMAP usa modelo OPENCV (con parámetros de distorsión k1, k2, p1, p2).
+    # Pero el 3D Gaussian Splatting de Inria SOLO acepta modelo PINHOLE (sin distorsión).
+    # `image_undistorter` corrige la distorsión del lente y genera el dataset en formato PINHOLE.
+    # Sin este paso, train.py falla con:
+    # "AssertionError: Colmap camera model not handled"
+    report(0.45, "COLMAP: undistortion de imágenes (corrigiendo distorsión de lente)...")
+    undistorted_dir = WORK / "undistorted"
+    undistorted_dir.mkdir(exist_ok=True)
+    run([
+        "colmap", "image_undistorter",
+        "--image_path", str(FRAMES_DIR),
+        "--input_path", str(sparse / "0"),
+        "--output_path", str(undistorted_dir),
+        "--output_type", "COLMAP",
+    ])
+    # El undistorter crea:
+    #   undistorted_dir/images/   <- imágenes corregidas
+    #   undistorted_dir/sparse/   <- COLMAP files en formato PINHOLE
+    # train.py de 3DGS espera estructura: <dataset>/images/ y <dataset>/sparse/0/
+    # El undistorter pone los archivos en sparse/ directamente, no en sparse/0/.
+    # Hay que moverlos para que 3DGS los encuentre.
+    import shutil
+    if (undistorted_dir / "sparse").exists() and not (undistorted_dir / "sparse" / "0").exists():
+        # Mover el contenido de sparse/ a sparse/0/
+        sparse_target = undistorted_dir / "sparse" / "0"
+        sparse_target.mkdir(exist_ok=True)
+        for item in (undistorted_dir / "sparse").iterdir():
+            if item.is_file():
+                shutil.move(str(item), str(sparse_target / item.name))
+    print(f"[worker] Undistorted dataset listo en: {undistorted_dir}", flush=True)
+
 
 def train_gaussian_splatting():
     report(0.50, f"Entrenando 3D Gaussian Splatting ({GS_ITERATIONS} iters)...")
@@ -280,9 +312,14 @@ def train_gaussian_splatting():
         except Exception as e:
             print(f"[worker] fused-ssim falló pero no es crítico: {e}", flush=True)
     report(0.60, f"Iniciando training 3DGS ({GS_ITERATIONS} iters en GPU)...")
+    # IMPORTANTE: usamos el dataset UNDISTORTED, no el COLMAP raw.
+    # 3DGS solo acepta cámaras PINHOLE, y el undistorter generó imágenes corregidas + cámaras PINHOLE.
+    undistorted_dir = WORK / "undistorted"
+    if not undistorted_dir.exists():
+        raise RuntimeError("Dataset undistorted no encontrado. ¿Falló image_undistorter?")
     run([
         "python3", str(gs_dir / "train.py"),
-        "-s", str(COLMAP_DIR),
+        "-s", str(undistorted_dir),
         "-m", str(WORK / "gs_output"),
         "--iterations", str(GS_ITERATIONS),
         "--densify_grad_threshold", "0.0002",
