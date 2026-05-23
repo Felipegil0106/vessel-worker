@@ -57,6 +57,29 @@ _current_message = "Iniciando..."
 _keep_heartbeat = True
 
 
+def _clean_url(url: str) -> str:
+    """Limpia URLs mal pegadas tipo http:https://..."""
+    if not url:
+        return ""
+    url = url.strip()
+    for _ in range(5):
+        changed = False
+        for bad in ("http:https://", "https:https://", "http:http://", "https:http://"):
+            if url.startswith(bad):
+                url = url[len(bad) - len("https://"):]
+                changed = True
+                break
+        if not changed:
+            break
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    return url.rstrip("/")
+
+
+CALLBACK_URL = _clean_url(CALLBACK_URL)
+print(f"[worker] CALLBACK_URL normalizada: {CALLBACK_URL}", flush=True)
+
+
 def s3():
     return boto3.client("s3", **S3_CONFIG)
 
@@ -81,6 +104,8 @@ def callback(payload: dict):
             },
             timeout=15,
         )
+        if r.status_code != 200:
+            print(f"callback non-200: {r.status_code} {r.text[:200]}", flush=True)
         return r.status_code == 200
     except Exception as e:
         print(f"callback failed: {e}", flush=True)
@@ -277,6 +302,20 @@ def upload_result():
 
 def main():
     global _keep_heartbeat
+    # PRIMER HEARTBEAT: lo mandamos antes de hacer NADA, para que el watchdog
+    # sepa que estamos vivos. Si esto falla, no podemos comunicarnos con el backend,
+    # así que abortamos rápido en vez de gastar GPU procesando.
+    print("[worker] Iniciando, enviando primer heartbeat...", flush=True)
+    for attempt in range(3):
+        if callback({"type": "progress", "progress": 0.0, "message": "Worker arrancado, preparando ambiente..."}):
+            print("[worker] Backend respondió OK al primer heartbeat", flush=True)
+            break
+        print(f"[worker] Primer heartbeat falló (intento {attempt+1}/3), reintentando en 3s...", flush=True)
+        time.sleep(3)
+    else:
+        print("[worker] CRITICAL: No se pudo contactar al backend tras 3 intentos. Abortando.", flush=True)
+        sys.exit(1)
+
     hb_thread = threading.Thread(target=heartbeat_loop, daemon=True)
     hb_thread.start()
     try:
@@ -293,10 +332,10 @@ def main():
         success_payload = {"type": "completed", "result_key": RESULT_KEY}
         for attempt in range(5):
             if callback(success_payload):
-                print("✅ Backend notificado", flush=True)
+                print("[worker] Backend notificado del éxito", flush=True)
                 break
             time.sleep(5)
-        print("✅ Pipeline completado", flush=True)
+        print("[worker] Pipeline completado", flush=True)
     except subprocess.CalledProcessError as e:
         _keep_heartbeat = False
         traceback.print_exc()
