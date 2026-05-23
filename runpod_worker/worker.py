@@ -248,12 +248,38 @@ def train_gaussian_splatting():
             "https://github.com/graphdeco-inria/gaussian-splatting",
             str(gs_dir),
         ])
+        # Instalamos dependencias adicionales que el train.py necesita
+        # tqdm, plyfile y otros.
+        report(0.51, "Instalando torchvision y dependencias de 3DGS...")
         run([
-            "pip", "install", "-q",
-            str(gs_dir / "submodules" / "diff-gaussian-rasterization"),
-            str(gs_dir / "submodules" / "simple-knn"),
-            "plyfile",
+            "pip", "install", "--no-build-isolation",
+            "tqdm", "plyfile", "joblib",
         ])
+        # IMPORTANTE: --no-build-isolation hace que pip use el torch del sistema
+        # en lugar de crear un ambiente aislado donde torch no existe.
+        # Sin esta flag, falla con "ModuleNotFoundError: No module named 'torch'"
+        # porque la imagen runpod/pytorch tiene torch instalado en el sistema.
+        # Compilar diff-gaussian-rasterization toma ~5-10 min (CUDA build).
+        report(0.52, "Compilando diff-gaussian-rasterization (5-10 min)...")
+        run([
+            "pip", "install", "--no-build-isolation",
+            str(gs_dir / "submodules" / "diff-gaussian-rasterization"),
+        ])
+        report(0.55, "Compilando simple-knn...")
+        run([
+            "pip", "install", "--no-build-isolation",
+            str(gs_dir / "submodules" / "simple-knn"),
+        ])
+        # fused-ssim es opcional pero mejora velocidad de training
+        try:
+            report(0.57, "Compilando fused-ssim (opcional)...")
+            run([
+                "pip", "install", "--no-build-isolation",
+                str(gs_dir / "submodules" / "fused-ssim"),
+            ])
+        except Exception as e:
+            print(f"[worker] fused-ssim falló pero no es crítico: {e}", flush=True)
+    report(0.60, f"Iniciando training 3DGS ({GS_ITERATIONS} iters en GPU)...")
     run([
         "python3", str(gs_dir / "train.py"),
         "-s", str(COLMAP_DIR),
