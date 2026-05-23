@@ -212,18 +212,18 @@ def run_colmap():
     report(0.32, "COLMAP: matching secuencial (optimizado para video)...")
     # IMPORTANTE: usamos sequential_matcher en vez de exhaustive_matcher.
     # Para video con N frames, exhaustive compara N*(N-1)/2 pares (122 frames = 7,381 pares = horas en CPU).
-    # Sequential compara cada frame con los siguientes 'overlap' frames + loop detection.
+    # Sequential compara cada frame con los siguientes 'overlap' frames.
     # Esto es 10-50x más rápido y de hecho da MEJOR calidad para video porque no hay
     # falsos matches entre frames temporalmente lejanos.
+    # NOTA: loop_detection deshabilitado porque requiere un vocab_tree pre-entrenado
+    # que no viene con COLMAP en Ubuntu. Para compensar, subimos el overlap a 15.
     run([
         "colmap", "sequential_matcher",
         "--database_path", str(db),
         "--SiftMatching.use_gpu", "0",  # CPU: mismo motivo que extraction
         "--SiftMatching.num_threads", "-1",
-        "--SequentialMatching.overlap", "10",  # cada frame matchea con los próximos 10
+        "--SequentialMatching.overlap", "15",  # cada frame matchea con los próximos 15
         "--SequentialMatching.quadratic_overlap", "1",  # también con 2, 4, 8, 16, 32... (mejor cobertura)
-        "--SequentialMatching.loop_detection", "1",  # detecta cuando volvés a pasar por el mismo lugar
-        "--SequentialMatching.loop_detection_num_images", "30",
     ])
     report(0.40, "COLMAP: Structure-from-Motion (poses de cámara)...")
     run([
