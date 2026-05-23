@@ -194,21 +194,27 @@ def run_colmap():
     db = COLMAP_DIR / "database.db"
     sparse = COLMAP_DIR / "sparse"
     sparse.mkdir(exist_ok=True)
+    # Importante: usamos CPU para SIFT porque COLMAP necesita OpenGL para usar GPU,
+    # y los pods de RunPod son headless (sin display X). El extra de 5-7 min en CPU
+    # es aceptable vs. tener que compilar COLMAP con EGL.
+    # El 3D Gaussian Splatting que viene después SÍ usa GPU al 100%.
     run([
         "colmap", "feature_extractor",
         "--database_path", str(db),
         "--image_path", str(FRAMES_DIR),
         "--ImageReader.single_camera", "1",
         "--ImageReader.camera_model", "OPENCV",
-        "--SiftExtraction.use_gpu", "1",
+        "--SiftExtraction.use_gpu", "0",  # CPU: evita problema de OpenGL en headless
         "--SiftExtraction.max_num_features", "8192",
         "--SiftExtraction.peak_threshold", "0.004",
+        "--SiftExtraction.num_threads", "-1",  # usar todos los cores
     ])
     report(0.32, "COLMAP: matching exhaustivo de features...")
     run([
         "colmap", "exhaustive_matcher",
         "--database_path", str(db),
-        "--SiftMatching.use_gpu", "1",
+        "--SiftMatching.use_gpu", "0",  # CPU: mismo motivo
+        "--SiftMatching.num_threads", "-1",
     ])
     report(0.40, "COLMAP: Structure-from-Motion (poses de cámara)...")
     run([
